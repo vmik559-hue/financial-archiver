@@ -18,7 +18,6 @@ from flask import Flask, render_template_string, request, jsonify, Response, sen
 
 warnings.filterwarnings("ignore")
 
-# ==================== CLOUD CONFIGURATION ====================
 CSV_URL = "https://raw.githubusercontent.com/vmik559-hue/financial-archiver/refs/heads/main/all-listed-companies.csv"
 DOCUMENTS_ROOT = Path('/tmp') / "Financial_Archive"
 SCREENER_DOMAIN = "https://www.screener.in"
@@ -94,7 +93,6 @@ class ScreenerUnifiedFetcher:
         comp_root = DOCUMENTS_ROOT / self.sanitize(name)
         download_tasks = []
         
-        # Annual Reports
         ar_section = soup.find('div', id='annual-reports')
         if not ar_section:
             header = soup.find(lambda tag: tag.name in ['h2', 'h3'] and 'annual report' in tag.text.lower())
@@ -116,7 +114,6 @@ class ScreenerUnifiedFetcher:
                     file_path = save_dir / f"Annual_Report_{year}.pdf"
                     download_tasks.append(('Annual Report', year, link['href'], file_path))
 
-        # Concalls (PPT & Transcripts)
         all_links = soup.find_all('a', href=True)
         seen_urls = set()
 
@@ -180,495 +177,10 @@ class ScreenerUnifiedFetcher:
         log_queue.put(f"COMPLETE|{completed}|{total_files}|{str(comp_root)}")
         return self.downloaded_files
 
-# ==================== FLASK APP ====================
 app = Flask(__name__)
 download_paths = {}
 
-HTML_TEMPLATE = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Financial Document Archiver</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Inter', 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #7e22ce 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-            animation: gradientShift 10s ease infinite;
-            background-size: 200% 200%;
-        }
-        @keyframes gradientShift {
-            0%, 100% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-        }
-        .container {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(20px);
-            border-radius: 30px;
-            box-shadow: 0 30px 90px rgba(0,0,0,0.4);
-            max-width: 900px;
-            width: 100%;
-            padding: 50px;
-            animation: slideUp 0.6s ease;
-        }
-        @keyframes slideUp {
-            from { opacity: 0; transform: translateY(30px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        h1 {
-            background: linear-gradient(135deg, #1e3c72, #7e22ce);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 10px;
-            font-size: 3em;
-            text-align: center;
-            font-weight: 800;
-            letter-spacing: -1px;
-        }
-        .subtitle {
-            text-align: center;
-            color: #555;
-            margin-bottom: 40px;
-            font-size: 1.2em;
-            font-weight: 500;
-        }
-        .search-box {
-            display: flex;
-            gap: 15px;
-            margin-bottom: 25px;
-        }
-        input[type="text"] {
-            flex: 1;
-            padding: 18px 24px;
-            border: 3px solid #e0e0e0;
-            border-radius: 15px;
-            font-size: 17px;
-            transition: all 0.3s;
-            font-weight: 500;
-        }
-        input[type="text"]:focus {
-            outline: none;
-            border-color: #7e22ce;
-            box-shadow: 0 0 0 4px rgba(126, 34, 206, 0.1);
-        }
-        .year-selector {
-            display: flex;
-            gap: 15px;
-            margin-bottom: 25px;
-            align-items: center;
-            justify-content: center;
-        }
-        .year-input-group {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        .year-input-group label {
-            font-weight: 600;
-            color: #555;
-            font-size: 14px;
-        }
-        input[type="number"] {
-            padding: 15px 20px;
-            border: 3px solid #e0e0e0;
-            border-radius: 12px;
-            font-size: 16px;
-            width: 140px;
-            transition: all 0.3s;
-            font-weight: 600;
-            text-align: center;
-        }
-        input[type="number"]:focus {
-            outline: none;
-            border-color: #7e22ce;
-            box-shadow: 0 0 0 4px rgba(126, 34, 206, 0.1);
-        }
-        .year-divider {
-            font-size: 24px;
-            color: #7e22ce;
-            font-weight: bold;
-            margin-top: 28px;
-        }
-        button {
-            padding: 18px 40px;
-            background: linear-gradient(135deg, #1e3c72, #7e22ce);
-            color: white;
-            border: none;
-            border-radius: 15px;
-            font-size: 17px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.3s;
-            box-shadow: 0 8px 25px rgba(126, 34, 206, 0.3);
-        }
-        button:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 12px 35px rgba(126, 34, 206, 0.4);
-        }
-        button:active {
-            transform: translateY(-1px);
-        }
-        button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-        .recommendations {
-            display: none;
-            margin-bottom: 25px;
-            padding: 25px;
-            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
-            border-radius: 20px;
-            border: 3px solid #dee2e6;
-        }
-        .recommendations.show {
-            display: block;
-            animation: fadeIn 0.4s ease;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-        .rec-item {
-            padding: 16px 20px;
-            margin: 10px 0;
-            background: white;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: all 0.3s;
-            border: 3px solid transparent;
-            font-weight: 500;
-        }
-        .rec-item:hover {
-            border-color: #7e22ce;
-            transform: translateX(10px);
-            box-shadow: 0 5px 20px rgba(126, 34, 206, 0.2);
-        }
-        .rec-item strong {
-            color: #7e22ce;
-            font-weight: 700;
-        }
-        .progress-container {
-            display: none;
-            margin-top: 30px;
-            padding: 30px;
-            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
-            border-radius: 20px;
-            border: 3px solid #dee2e6;
-        }
-        .progress-container.show {
-            display: block;
-            animation: fadeIn 0.4s ease;
-        }
-        .progress-header {
-            text-align: center;
-            margin-bottom: 25px;
-        }
-        .progress-stats {
-            display: flex;
-            justify-content: space-around;
-            margin-bottom: 25px;
-            gap: 20px;
-        }
-        .stat-box {
-            background: white;
-            padding: 20px;
-            border-radius: 15px;
-            text-align: center;
-            flex: 1;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-        }
-        .stat-number {
-            font-size: 2.5em;
-            font-weight: 800;
-            background: linear-gradient(135deg, #1e3c72, #7e22ce);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .stat-label {
-            color: #666;
-            font-weight: 600;
-            margin-top: 8px;
-            font-size: 14px;
-        }
-        .progress-bar-container {
-            background: #e0e0e0;
-            height: 40px;
-            border-radius: 20px;
-            overflow: hidden;
-            position: relative;
-            box-shadow: inset 0 2px 5px rgba(0,0,0,0.1);
-        }
-        .progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #1e3c72, #7e22ce);
-            transition: width 0.5s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 700;
-            font-size: 16px;
-            box-shadow: 0 2px 10px rgba(126, 34, 206, 0.5);
-        }
-        .status {
-            text-align: center;
-            margin: 25px 0;
-            font-weight: 700;
-            font-size: 1.3em;
-            color: #333;
-        }
-        .loading {
-            display: inline-block;
-            width: 24px;
-            height: 24px;
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #7e22ce;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            margin-right: 10px;
-            vertical-align: middle;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        .complete-message {
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: white;
-            padding: 25px;
-            border-radius: 15px;
-            text-align: center;
-            font-size: 1.4em;
-            font-weight: 700;
-            margin-top: 20px;
-            box-shadow: 0 10px 30px rgba(16, 185, 129, 0.3);
-            animation: fadeIn 0.5s ease;
-        }
-        .download-btn {
-            display: none;
-            margin: 20px auto;
-            padding: 20px 50px;
-            background: linear-gradient(135deg, #10b981, #059669);
-            font-size: 1.2em;
-            animation: pulse 2s infinite;
-        }
-        .download-btn.show {
-            display: block;
-        }
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>📊 Financial Data Download</h1>
-        <p class="subtitle">Extract Annual Reports, PPTs & Transcripts</p>
-        
-        <div class="search-box">
-            <input type="text" id="searchInput" placeholder="Enter Company Name, NSE Code, or BSE Code..." />
-            <button id="searchBtn" onclick="searchCompany()">🔍 Search</button>
-        </div>
-
-        <div class="year-selector">
-            <div class="year-input-group">
-                <label>FROM YEAR</label>
-                <input type="number" id="startYear" value="2015" min="2000" max="2025" />
-            </div>
-            <div class="year-divider">→</div>
-            <div class="year-input-group">
-                <label>TO YEAR</label>
-                <input type="number" id="endYear" value="2025" min="2000" max="2025" />
-            </div>
-        </div>
-
-        <div id="recommendations" class="recommendations"></div>
-        
-        <div id="status" class="status"></div>
-        
-        <button id="downloadBtn" class="download-btn" onclick="downloadZip()">
-            📥 Download All Files (ZIP)
-        </button>
-        
-        <div id="progressContainer" class="progress-container">
-            <div class="progress-header">
-                <h2 style="color: #333; margin-bottom: 10px;">⚡ Downloading Files</h2>
-            </div>
-            <div class="progress-stats">
-                <div class="stat-box">
-                    <div class="stat-number" id="completedCount">0</div>
-                    <div class="stat-label">Completed</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-number" id="totalCount">0</div>
-                    <div class="stat-label">Total Files</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-number" id="etaCount">0s</div>
-                    <div class="stat-label">Time Left</div>
-                </div>
-            </div>
-            <div class="progress-bar-container">
-                <div class="progress-bar" id="progressBar" style="width: 0%;">0%</div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        let selectedCompany = null;
-        let eventSource = null;
-        let sessionId = null;
-
-        document.getElementById('searchInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') searchCompany();
-        });
-
-        async function searchCompany() {
-            const query = document.getElementById('searchInput').value.trim();
-            if (!query) {
-                alert('Please enter a company name or code');
-                return;
-            }
-
-            document.getElementById('status').innerHTML = '<div class="loading"></div> Searching database...';
-            document.getElementById('recommendations').classList.remove('show');
-            document.getElementById('progressContainer').classList.remove('show');
-            document.getElementById('downloadBtn').classList.remove('show');
-            
-            const response = await fetch('/search', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({query: query})
-            });
-
-            const data = await response.json();
-            
-            if (data.error) {
-                document.getElementById('status').innerHTML = '❌ ' + data.error;
-                return;
-            }
-
-            if (data.matches.length === 1) {
-                selectedCompany = data.matches[0];
-                startExtraction();
-            } else {
-                showRecommendations(data.matches);
-            }
-        }
-
-        function showRecommendations(matches) {
-            document.getElementById('status').innerHTML = `✨ Found ${matches.length} matches. Select your company:`;
-            const recDiv = document.getElementById('recommendations');
-            recDiv.innerHTML = matches.map((m, idx) => `
-                <div class="rec-item" onclick="selectCompany(${idx})">
-                    <strong>[${idx + 1}]</strong> ${m.Name} 
-                    <span style="color: #666;">(NSE: ${m.NSE_Code || 'N/A'} | BSE: ${m.BSE_Code || 'N/A'})</span>
-                </div>
-            `).join('');
-            recDiv.classList.add('show');
-            
-            window.currentMatches = matches;
-        }
-
-        function selectCompany(idx) {
-            selectedCompany = window.currentMatches[idx];
-            document.getElementById('recommendations').classList.remove('show');
-            startExtraction();
-        }
-
-        function startExtraction() {
-            const startYear = parseInt(document.getElementById('startYear').value);
-            const endYear = parseInt(document.getElementById('endYear').value);
-            
-            if (startYear > endYear) {
-                alert('Start year must be less than or equal to end year');
-                return;
-            }
-
-            document.getElementById('status').innerHTML = '<div class="loading"></div> Initializing extraction...';
-            document.getElementById('progressContainer').classList.add('show');
-            document.getElementById('searchBtn').disabled = true;
-            document.getElementById('downloadBtn').classList.remove('show');
-
-            if (eventSource) eventSource.close();
-            
-            const url = '/extract?symbol=' + encodeURIComponent(selectedCompany.symbol) + 
-                        '&name=' + encodeURIComponent(selectedCompany.Name) +
-                        '&start_year=' + startYear +
-                        '&end_year=' + endYear;
-            
-            eventSource = new EventSource(url);
-            
-            eventSource.onmessage = function(event) {
-                const data = event.data.split('|');
-                const type = data[0];
-                
-                if (type === 'STATUS') {
-                    document.getElementById('status').innerHTML = '<div class="loading"></div> ' + data[1];
-                } 
-                else if (type === 'TOTAL') {
-                    document.getElementById('totalCount').textContent = data[1];
-                }
-                else if (type === 'PROGRESS') {
-                    const completed = parseInt(data[1]);
-                    const total = parseInt(data[2]);
-                    const eta = parseInt(data[3]);
-                    const percentage = Math.round((completed / total) * 100);
-                    
-                    document.getElementById('completedCount').textContent = completed;
-                    document.getElementById('totalCount').textContent = total;
-                    document.getElementById('etaCount').textContent = eta + 's';
-                    document.getElementById('progressBar').style.width = percentage + '%';
-                    document.getElementById('progressBar').textContent = percentage + '%';
-                }
-                else if (type === 'COMPLETE') {
-                    const completed = data[1];
-                    const total = data[2];
-                    sessionId = data[3];
-                    
-                    document.getElementById('status').innerHTML = `
-                        <div class="complete-message">
-                            ✅ Extraction Complete! Downloaded ${completed}/${total} files
-                        </div>
-                    `;
-                    document.getElementById('searchBtn').disabled = false;
-                    document.getElementById('downloadBtn').classList.add('show');
-                    eventSource.close();
-                }
-                else if (type === 'ERROR') {
-                    document.getElementById('status').innerHTML = '❌ ' + data[1];
-                    document.getElementById('searchBtn').disabled = false;
-                    eventSource.close();
-                }
-            };
-
-            eventSource.onerror = function() {
-                document.getElementById('status').innerHTML = '❌ Connection error during extraction';
-                document.getElementById('searchBtn').disabled = false;
-                eventSource.close();
-            };
-        }
-
-        function downloadZip() {
-            if (sessionId) {
-                window.location.href = '/download?session=' + sessionId;
-            } else {
-                alert('No files available for download');
-            }
-        }
-    </script>
-</body>
-</html>
-'''
+HTML_TEMPLATE = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Financial Document Archiver</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter','Segoe UI',sans-serif;background:linear-gradient(135deg,#1e3c72 0%,#2a5298 50%,#7e22ce 100%);min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px;animation:gradientShift 10s ease infinite;background-size:200% 200%}@keyframes gradientShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}.container{background:rgba(255,255,255,0.95);backdrop-filter:blur(20px);border-radius:30px;box-shadow:0 30px 90px rgba(0,0,0,0.4);max-width:900px;width:100%;padding:50px;animation:slideUp 0.6s ease}@keyframes slideUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}h1{background:linear-gradient(135deg,#1e3c72,#7e22ce);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:10px;font-size:3em;text-align:center;font-weight:800}.subtitle{text-align:center;color:#555;margin-bottom:40px;font-size:1.2em}.search-box{display:flex;gap:15px;margin-bottom:25px}input[type="text"]{flex:1;padding:18px 24px;border:3px solid #e0e0e0;border-radius:15px;font-size:17px}input[type="text"]:focus{outline:none;border-color:#7e22ce}.year-selector{display:flex;gap:15px;margin-bottom:25px;align-items:center;justify-content:center}.year-input-group{display:flex;flex-direction:column;gap:8px}.year-input-group label{font-weight:600;color:#555}input[type="number"]{padding:15px 20px;border:3px solid #e0e0e0;border-radius:12px;font-size:16px;width:140px;text-align:center}button{padding:18px 40px;background:linear-gradient(135deg,#1e3c72,#7e22ce);color:white;border:none;border-radius:15px;font-size:17px;font-weight:700;cursor:pointer}button:hover{transform:translateY(-3px)}.recommendations{display:none;margin-bottom:25px;padding:25px;background:#f8f9fa;border-radius:20px}.recommendations.show{display:block}.rec-item{padding:16px 20px;margin:10px 0;background:white;border-radius:12px;cursor:pointer}.rec-item:hover{border:3px solid #7e22ce}.progress-container{display:none;margin-top:30px;padding:30px;background:#f8f9fa;border-radius:20px}.progress-container.show{display:block}.stat-box{background:white;padding:20px;border-radius:15px;text-align:center;flex:1}.stat-number{font-size:2.5em;font-weight:800}.progress-bar{height:40px;background:linear-gradient(90deg,#1e3c72,#7e22ce);color:white;font-weight:700;font-size:16px;display:flex;align-items:center;justify-content:center}.status{text-align:center;margin:25px 0;font-weight:700;font-size:1.3em}.download-btn{display:none;margin:20px auto;padding:20px 50px;background:linear-gradient(135deg,#10b981,#059669);font-size:1.2em}.download-btn.show{display:block}</style></head><body><div class="container"><h1>📊 Financial Data</h1><p class="subtitle">Extract Reports, PPTs & Transcripts</p><div class="search-box"><input type="text" id="searchInput" placeholder="Enter Company Name or Code..."/><button onclick="searchCompany()">Search</button></div><div class="year-selector"><div class="year-input-group"><label>FROM</label><input type="number" id="startYear" value="2015" min="2000" max="2025"/></div><div>→</div><div class="year-input-group"><label>TO</label><input type="number" id="endYear" value="2025" min="2000" max="2025"/></div></div><div id="recommendations" class="recommendations"></div><div id="status" class="status"></div><button id="downloadBtn" class="download-btn" onclick="downloadZip()">Download ZIP</button><div id="progressContainer" class="progress-container"><div id="completedCount">0</div><div id="totalCount">0</div><div class="progress-bar" id="progressBar" style="width:0%">0%</div></div></div><script>let selectedCompany=null;let eventSource=null;let sessionId=null;document.getElementById('searchInput').addEventListener('keypress',function(e){if(e.key==='Enter')searchCompany()});async function searchCompany(){const query=document.getElementById('searchInput').value.trim();if(!query){alert('Enter company name');return}document.getElementById('status').innerHTML='Searching...';const response=await fetch('/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:query})});const data=await response.json();if(data.error){document.getElementById('status').innerHTML='❌ '+data.error;return}if(data.matches.length===1){selectedCompany=data.matches[0];startExtraction()}else{showRecommendations(data.matches)}}function showRecommendations(matches){document.getElementById('status').innerHTML='Found '+matches.length+' matches:';const recDiv=document.getElementById('recommendations');recDiv.innerHTML=matches.map((m,idx)=>'<div class="rec-item" onclick="selectCompany('+idx+')">'+m.Name+'</div>').join('');recDiv.classList.add('show');window.currentMatches=matches}function selectCompany(idx){selectedCompany=window.currentMatches[idx];document.getElementById('recommendations').classList.remove('show');startExtraction()}function startExtraction(){const startYear=parseInt(document.getElementById('startYear').value);const endYear=parseInt(document.getElementById('endYear').value);document.getElementById('status').innerHTML='Extracting...';document.getElementById('progressContainer').classList.add('show');if(eventSource)eventSource.close();const url='/extract?symbol='+encodeURIComponent(selectedCompany.symbol)+'&name='+encodeURIComponent(selectedCompany.Name)+'&start_year='+startYear+'&end_year='+endYear;eventSource=new EventSource(url);eventSource.onmessage=function(event){const data=event.data.split('|');const type=data[0];if(type==='TOTAL'){document.getElementById('totalCount').textContent=data[1]}else if(type==='PROGRESS'){const completed=parseInt(data[1]);const total=parseInt(data[2]);const percentage=Math.round((completed/total)*100);document.getElementById('completedCount').textContent=completed;document.getElementById('progressBar').style.width=percentage+'%';document.getElementById('progressBar').textContent=percentage+'%'}else if(type==='COMPLETE'){sessionId=data[3];document.getElementById('status').innerHTML='✅ Complete! Downloaded '+data[1]+'/'+data[2]+' files';document.getElementById('downloadBtn').classList.add('show');eventSource.close()}}}function downloadZip(){if(sessionId){window.location.href='/download?session='+sessionId}}</script></body></html>'''
 
 @app.route('/')
 def index():
@@ -680,8 +192,8 @@ def search():
         df = pd.read_csv(CSV_URL)
         df['NSE Code'] = df['NSE Code'].astype(str).str.replace('nan', '')
         df['BSE Code'] = df['BSE Code'].apply(lambda x: str(int(x)) if pd.notnull(x) and str(x).replace('.0','').isdigit() else '')
-    except Exception as e:
-        return jsonify({'error': 'Failed to load company database'})
+    except:
+        return jsonify({'error': 'Database error'})
 
     query = request.json.get('query', '').strip().lower()
     
@@ -692,7 +204,7 @@ def search():
     ]
 
     if match.empty:
-        return jsonify({'error': 'No matching company found'})
+        return jsonify({'error': 'No company found'})
 
     matches = []
     for _, row in match.head(10).iterrows():
@@ -712,7 +224,6 @@ def extract():
     name = request.args.get('name')
     start_year = int(request.args.get('start_year', 2015))
     end_year = int(request.args.get('end_year', 2025))
-
     session_id = f"{symbol}_{int(time.time())}"
 
     def generate():
@@ -746,12 +257,12 @@ def download():
     session_id = request.args.get('session')
     
     if not session_id or session_id not in download_paths:
-        return "No files available for download", 404
+        return "No files available", 404
     
     download_path = download_paths[session_id]
     
     if not download_path or not Path(download_path).exists():
-        return "Files not found or expired", 404
+        return "Files not found", 404
     
     memory_file = io.BytesIO()
     
@@ -763,25 +274,15 @@ def download():
                 zipf.write(file_path, arcname)
         
         memory_file.seek(0)
-        
         company_name = Path(download_path).name
-        zip_filename = f"{company_name}_Financial_Documents.zip"
+        zip_filename = f"{company_name}_Documents.zip"
         
         del download_paths[session_id]
         
-        return send_file(
-            memory_file,
-            mimetype='application/zip',
-            as_attachment=True,
-            download_name=zip_filename
-        )
+        return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=zip_filename)
     except Exception as e:
-        return f"Error creating ZIP: {str(e)}", 500
+        return f"Error: {str(e)}", 500
 
-@app.route('/debug/check-session/<session_id>')
-def check_session(session_id):
-    exists = session_id in download_paths
-    path = download_paths.get(session_id, 'Not found')
-    return jsonify({
-        'session_exists': exists,
-        'path': path,
+if __name__ == "__main__":
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
