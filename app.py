@@ -103,18 +103,26 @@ class ScreenerUnifiedFetcher:
         if ar_section:
             ar_items = ar_section.find_all('li')
             for li in ar_items:
+                link = li.find('a', href=True)
+                if not link:
+                    continue
+                    
                 full_row_text = li.get_text(" ", strip=True)
                 year_match = re.search(r'\b(20\d{2})\b', full_row_text)
-                year = year_match.group(1) if year_match else "Unknown_Year"
                 
-                if year != "Unknown_Year" and (int(year) < start_year or int(year) > end_year):
+                if not year_match:
+                    continue
+                    
+                year = year_match.group(1)
+                year_int = int(year)
+                
+                # Skip if outside year range
+                if year_int < start_year or year_int > end_year:
                     continue
                 
-                link = li.find('a', href=True)
-                if link:
-                    save_dir = comp_root / "Annual_Reports" / year
-                    file_path = save_dir / f"Annual_Report_{year}.pdf"
-                    download_tasks.append(('Annual Report', year, link['href'], file_path))
+                save_dir = comp_root / "Annual_Reports" / year
+                file_path = save_dir / f"Annual_Report_{year}.pdf"
+                download_tasks.append(('Annual Report', year, link['href'], file_path))
 
         all_links = soup.find_all('a', href=True)
         seen_urls = set()
