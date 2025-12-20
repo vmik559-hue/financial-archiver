@@ -104,53 +104,95 @@ class ScreenerUnifiedFetcher:
         download_tasks = []
         
         # ===== ANNUAL REPORTS - FIXED LOGIC =====
+        log_queue.put(f"STATUS|Searching for annual reports...")
+        
+        # Try multiple ways to find annual reports section
         ar_section = soup.find('div', id='annual-reports')
+        
         if not ar_section:
-            header = soup.find(lambda tag: tag.name in ['h2', 'h3'] and 'annual report' in tag.text.lower())
-            if header: ar_section = header.find_next('div')
+            # Try finding by header text
+            header = soup.find(lambda tag: tag.name in ['h2', 'h3', 'h4'] and 
+                              'annual report' in tag.get_text().lower())
+            if header:
+                # Get the next sibling that's a div or ul
+                ar_section = header.find_next_sibling(['div', 'ul'])
+                if not ar_section:
+                    ar_section = header.find_next(['div', 'ul'])
 
         if ar_section:
-            ar_items = ar_section.find_all('li')
-            for li in ar_items:
-                link = li.find('a', href=True)
-                if not link:
-                    continue
-                    
-                full_row_text = li.get_text(" ", strip=True)
-                year_match = re.search(r'\b(20\d{2})\b', full_row_text)
+            # Find all links within the annual reports section
+            ar_links = ar_section.find_all('a', href=True)
+            
+            log_queue.put(f"STATUS|Found {len(ar_links)} potential annual report links")
+            
+            for link in ar_links:
+                href = link.get('href', '')
                 
-                if not year_match:
+                # Skip if not a valid link
+                if not href or not href.startswith('http'):
                     continue
-                    
-                year = year_match.group(1)
+                
+                # Get the full context - parent li or div text
+                parent = link.find_parent(['li', 'div', 'tr'])
+                if parent:
+                    full_text = parent.get_text(" ", strip=True)
+                else:
+                    full_text = link.get_text(" ", strip=True)
+                
+                # Also check the href itself for year information
+                combined_text = f"{full_text} {href}"
+                
+                # Extract all 4-digit years from the text
+                year_matches = re.findall(r'\b(20\d{2})\b', combined_text)
+                
+                if not year_matches:
+                    continue
+                
+                # Use the first year found (usually the report year)
+                year = year_matches[0]
                 year_int = int(year)
                 
-                # Skip if outside year range
+                # Check if within year range
                 if year_int < start_year or year_int > end_year:
                     continue
                 
                 save_dir = comp_root / "Annual_Reports" / year
                 file_path = save_dir / f"Annual_Report_{year}.pdf"
-                download_tasks.append(('Annual Report', year, link['href'], file_path))
+                
+                # Avoid duplicates
+                counter = 1
+                while file_path.exists() or any(str(file_path) in str(task[3]) for task in download_tasks):
+                    file_path = save_dir / f"Annual_Report_{year}_{counter}.pdf"
+                    counter += 1
+                
+                download_tasks.append(('Annual Report', year, href, file_path))
+                log_queue.put(f"STATUS|Queued: Annual Report {year}")
+        else:
+            log_queue.put(f"STATUS|No annual reports section found on page")
 
         # ===== PPT & TRANSCRIPTS - FIXED LOGIC =====
+        log_queue.put(f"STATUS|Searching for presentations and transcripts...")
         all_links = soup.find_all('a', href=True)
         seen_urls = set()
 
         for link in all_links:
             link_text = link.get_text(strip=True).lower()
             href = link['href']
+            
+            # Skip if already processed or invalid
             if href in seen_urls or not href.startswith('http') or "consolidated" in href: 
                 continue
 
             cat = None
-            if "transcript" in link_text: cat = "Transcript"
-            elif link_text == "ppt": cat = "PPT"
+            if "transcript" in link_text: 
+                cat = "Transcript"
+            elif link_text == "ppt": 
+                cat = "PPT"
             
             if cat:
                 year, month = self.extract_metadata(link)
                 
-                # FIXED: Skip if year is unknown OR outside range
+                # Skip if year is unknown OR outside range
                 if year == "Unknown_Year":
                     continue
                     
@@ -179,6 +221,7 @@ class ScreenerUnifiedFetcher:
             return None
 
         log_queue.put(f"TOTAL|{total_files}")
+        log_queue.put(f"STATUS|Starting download of {total_files} files...")
         
         completed = 0
         start_time = time.time()
@@ -191,6 +234,9 @@ class ScreenerUnifiedFetcher:
             
             for future in as_completed(future_to_task):
                 completed += 1
+                task = future_to_task[future]
+                success = future.result()
+                
                 elapsed = time.time() - start_time
                 avg_time = elapsed / completed
                 remaining = total_files - completed
