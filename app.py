@@ -35,6 +35,7 @@ class ScreenerUnifiedFetcher:
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
         self.downloaded_files = []
+        self.company_root = None  # Store the root path
 
     def sanitize(self, name):
         return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
@@ -71,7 +72,7 @@ class ScreenerUnifiedFetcher:
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(save_path, 'wb') as f:
                     f.write(r.content)
-                self.downloaded_files.append(save_path)
+                self.downloaded_files.append(str(save_path))  # Store as string for serialization
                 return True
             return False
         except Exception as e:
@@ -88,9 +89,10 @@ class ScreenerUnifiedFetcher:
             soup = BeautifulSoup(resp.content, 'html.parser')
         except Exception as e:
             log_queue.put(f"ERROR|Connection failed: {str(e)}")
-            return []
+            return None
 
         comp_root = DOCUMENTS_ROOT / self.sanitize(name)
+        self.company_root = str(comp_root)  # Store root path
         download_tasks = []
         
         ar_section = soup.find('div', id='annual-reports')
@@ -151,7 +153,7 @@ class ScreenerUnifiedFetcher:
         if total_files == 0:
             log_queue.put("STATUS|No files found in the specified year range")
             log_queue.put("COMPLETE|0|0|")
-            return []
+            return None
 
         log_queue.put(f"TOTAL|{total_files}")
         
@@ -174,13 +176,13 @@ class ScreenerUnifiedFetcher:
                 log_queue.put(f"PROGRESS|{completed}|{total_files}|{eta_seconds}")
                 time.sleep(0.05)
         
-        log_queue.put(f"COMPLETE|{completed}|{total_files}|{str(comp_root)}")
-        return self.downloaded_files
+        log_queue.put(f"COMPLETE|{completed}|{total_files}|{self.company_root}")
+        return self.company_root
 
 app = Flask(__name__)
-download_paths = {}
+download_sessions = {}  # Changed from download_paths to download_sessions
 
-HTML_TEMPLATE = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Financial Document Archiver</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter','Segoe UI',sans-serif;background:linear-gradient(135deg,#1e3c72 0%,#2a5298 50%,#7e22ce 100%);min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px;animation:gradientShift 10s ease infinite;background-size:200% 200%}@keyframes gradientShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}.container{background:rgba(255,255,255,0.95);backdrop-filter:blur(20px);border-radius:30px;box-shadow:0 30px 90px rgba(0,0,0,0.4);max-width:900px;width:100%;padding:50px;animation:slideUp 0.6s ease}@keyframes slideUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}h1{background:linear-gradient(135deg,#1e3c72,#7e22ce);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:10px;font-size:3em;text-align:center;font-weight:800}.subtitle{text-align:center;color:#555;margin-bottom:40px;font-size:1.2em}.search-box{display:flex;gap:15px;margin-bottom:25px}input[type="text"]{flex:1;padding:18px 24px;border:3px solid #e0e0e0;border-radius:15px;font-size:17px}input[type="text"]:focus{outline:none;border-color:#7e22ce}.year-selector{display:flex;gap:15px;margin-bottom:25px;align-items:center;justify-content:center}.year-input-group{display:flex;flex-direction:column;gap:8px}.year-input-group label{font-weight:600;color:#555}input[type="number"]{padding:15px 20px;border:3px solid #e0e0e0;border-radius:12px;font-size:16px;width:140px;text-align:center}button{padding:18px 40px;background:linear-gradient(135deg,#1e3c72,#7e22ce);color:white;border:none;border-radius:15px;font-size:17px;font-weight:700;cursor:pointer}button:hover{transform:translateY(-3px)}.recommendations{display:none;margin-bottom:25px;padding:25px;background:#f8f9fa;border-radius:20px}.recommendations.show{display:block}.rec-item{padding:16px 20px;margin:10px 0;background:white;border-radius:12px;cursor:pointer}.rec-item:hover{border:3px solid #7e22ce}.progress-container{display:none;margin-top:30px;padding:30px;background:#f8f9fa;border-radius:20px}.progress-container.show{display:block}.stat-box{background:white;padding:20px;border-radius:15px;text-align:center;flex:1}.stat-number{font-size:2.5em;font-weight:800}.progress-bar{height:40px;background:linear-gradient(90deg,#1e3c72,#7e22ce);color:white;font-weight:700;font-size:16px;display:flex;align-items:center;justify-content:center}.status{text-align:center;margin:25px 0;font-weight:700;font-size:1.3em}.download-btn{display:none;margin:20px auto;padding:20px 50px;background:linear-gradient(135deg,#10b981,#059669);font-size:1.2em}.download-btn.show{display:block}</style></head><body><div class="container"><h1>📊 Financial Data</h1><p class="subtitle">Extract Reports, PPTs & Transcripts</p><div class="search-box"><input type="text" id="searchInput" placeholder="Enter Company Name or Code..."/><button onclick="searchCompany()">Search</button></div><div class="year-selector"><div class="year-input-group"><label>FROM</label><input type="number" id="startYear" value="2015" min="2000" max="2025"/></div><div>→</div><div class="year-input-group"><label>TO</label><input type="number" id="endYear" value="2025" min="2000" max="2025"/></div></div><div id="recommendations" class="recommendations"></div><div id="status" class="status"></div><button id="downloadBtn" class="download-btn" onclick="downloadZip()">Download ZIP</button><div id="progressContainer" class="progress-container"><div id="completedCount">0</div><div id="totalCount">0</div><div class="progress-bar" id="progressBar" style="width:0%">0%</div></div></div><script>let selectedCompany=null;let eventSource=null;let sessionId=null;document.getElementById('searchInput').addEventListener('keypress',function(e){if(e.key==='Enter')searchCompany()});async function searchCompany(){const query=document.getElementById('searchInput').value.trim();if(!query){alert('Enter company name');return}document.getElementById('status').innerHTML='Searching...';const response=await fetch('/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:query})});const data=await response.json();if(data.error){document.getElementById('status').innerHTML='❌ '+data.error;return}if(data.matches.length===1){selectedCompany=data.matches[0];startExtraction()}else{showRecommendations(data.matches)}}function showRecommendations(matches){document.getElementById('status').innerHTML='Found '+matches.length+' matches:';const recDiv=document.getElementById('recommendations');recDiv.innerHTML=matches.map((m,idx)=>'<div class="rec-item" onclick="selectCompany('+idx+')">'+m.Name+'</div>').join('');recDiv.classList.add('show');window.currentMatches=matches}function selectCompany(idx){selectedCompany=window.currentMatches[idx];document.getElementById('recommendations').classList.remove('show');startExtraction()}function startExtraction(){const startYear=parseInt(document.getElementById('startYear').value);const endYear=parseInt(document.getElementById('endYear').value);document.getElementById('status').innerHTML='Extracting...';document.getElementById('progressContainer').classList.add('show');if(eventSource)eventSource.close();const url='/extract?symbol='+encodeURIComponent(selectedCompany.symbol)+'&name='+encodeURIComponent(selectedCompany.Name)+'&start_year='+startYear+'&end_year='+endYear;eventSource=new EventSource(url);eventSource.onmessage=function(event){const data=event.data.split('|');const type=data[0];if(type==='TOTAL'){document.getElementById('totalCount').textContent=data[1]}else if(type==='PROGRESS'){const completed=parseInt(data[1]);const total=parseInt(data[2]);const percentage=Math.round((completed/total)*100);document.getElementById('completedCount').textContent=completed;document.getElementById('progressBar').style.width=percentage+'%';document.getElementById('progressBar').textContent=percentage+'%'}else if(type==='COMPLETE'){sessionId=data[3];document.getElementById('status').innerHTML='✅ Complete! Downloaded '+data[1]+'/'+data[2]+' files';document.getElementById('downloadBtn').classList.add('show');eventSource.close()}}}function downloadZip(){if(sessionId){window.location.href='/download?session='+sessionId}}</script></body></html>'''
+HTML_TEMPLATE = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Financial Document Archiver</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter','Segoe UI',sans-serif;background:linear-gradient(135deg,#1e3c72 0%,#2a5298 50%,#7e22ce 100%);min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px;animation:gradientShift 10s ease infinite;background-size:200% 200%}@keyframes gradientShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}.container{background:rgba(255,255,255,0.95);backdrop-filter:blur(20px);border-radius:30px;box-shadow:0 30px 90px rgba(0,0,0,0.4);max-width:900px;width:100%;padding:50px;animation:slideUp 0.6s ease}@keyframes slideUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}h1{background:linear-gradient(135deg,#1e3c72,#7e22ce);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:10px;font-size:3em;text-align:center;font-weight:800}.subtitle{text-align:center;color:#555;margin-bottom:40px;font-size:1.2em}.search-box{display:flex;gap:15px;margin-bottom:25px}input[type="text"]{flex:1;padding:18px 24px;border:3px solid #e0e0e0;border-radius:15px;font-size:17px}input[type="text"]:focus{outline:none;border-color:#7e22ce}.year-selector{display:flex;gap:15px;margin-bottom:25px;align-items:center;justify-content:center}.year-input-group{display:flex;flex-direction:column;gap:8px}.year-input-group label{font-weight:600;color:#555}input[type="number"]{padding:15px 20px;border:3px solid #e0e0e0;border-radius:12px;font-size:16px;width:140px;text-align:center}button{padding:18px 40px;background:linear-gradient(135deg,#1e3c72,#7e22ce);color:white;border:none;border-radius:15px;font-size:17px;font-weight:700;cursor:pointer}button:hover{transform:translateY(-3px)}.recommendations{display:none;margin-bottom:25px;padding:25px;background:#f8f9fa;border-radius:20px}.recommendations.show{display:block}.rec-item{padding:16px 20px;margin:10px 0;background:white;border-radius:12px;cursor:pointer}.rec-item:hover{border:3px solid #7e22ce}.progress-container{display:none;margin-top:30px;padding:30px;background:#f8f9fa;border-radius:20px}.progress-container.show{display:block}.stat-box{background:white;padding:20px;border-radius:15px;text-align:center;flex:1}.stat-number{font-size:2.5em;font-weight:800}.progress-bar{height:40px;background:linear-gradient(90deg,#1e3c72,#7e22ce);color:white;font-weight:700;font-size:16px;display:flex;align-items:center;justify-content:center}.status{text-align:center;margin:25px 0;font-weight:700;font-size:1.3em}.download-btn{display:none;margin:20px auto;padding:20px 50px;background:linear-gradient(135deg,#10b981,#059669);font-size:1.2em}.download-btn.show{display:block}</style></head><body><div class="container"><h1>📊 Financial Data</h1><p class="subtitle">Extract Reports, PPTs & Transcripts</p><div class="search-box"><input type="text" id="searchInput" placeholder="Enter Company Name or Code..."/><button onclick="searchCompany()">Search</button></div><div class="year-selector"><div class="year-input-group"><label>FROM</label><input type="number" id="startYear" value="2015" min="2000" max="2025"/></div><div>→</div><div class="year-input-group"><label>TO</label><input type="number" id="endYear" value="2025" min="2000" max="2025"/></div></div><div id="recommendations" class="recommendations"></div><div id="status" class="status"></div><button id="downloadBtn" class="download-btn" onclick="downloadZip()">Download ZIP</button><div id="progressContainer" class="progress-container"><div style="display:flex;gap:20px;margin-bottom:20px"><div class="stat-box"><div class="stat-number" id="completedCount">0</div><div>Downloaded</div></div><div class="stat-box"><div class="stat-number" id="totalCount">0</div><div>Total</div></div></div><div style="background:#e0e0e0;height:40px;border-radius:20px;overflow:hidden"><div class="progress-bar" id="progressBar" style="width:0%">0%</div></div></div></div><script>let selectedCompany=null;let eventSource=null;let sessionId=null;document.getElementById('searchInput').addEventListener('keypress',function(e){if(e.key==='Enter')searchCompany()});async function searchCompany(){const query=document.getElementById('searchInput').value.trim();if(!query){alert('Enter company name');return}document.getElementById('status').innerHTML='Searching...';const response=await fetch('/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:query})});const data=await response.json();if(data.error){document.getElementById('status').innerHTML='❌ '+data.error;return}if(data.matches.length===1){selectedCompany=data.matches[0];startExtraction()}else{showRecommendations(data.matches)}}function showRecommendations(matches){document.getElementById('status').innerHTML='Found '+matches.length+' matches:';const recDiv=document.getElementById('recommendations');recDiv.innerHTML=matches.map((m,idx)=>'<div class="rec-item" onclick="selectCompany('+idx+')">'+m.Name+'</div>').join('');recDiv.classList.add('show');window.currentMatches=matches}function selectCompany(idx){selectedCompany=window.currentMatches[idx];document.getElementById('recommendations').classList.remove('show');startExtraction()}function startExtraction(){const startYear=parseInt(document.getElementById('startYear').value);const endYear=parseInt(document.getElementById('endYear').value);document.getElementById('status').innerHTML='Extracting...';document.getElementById('progressContainer').classList.add('show');document.getElementById('downloadBtn').classList.remove('show');if(eventSource)eventSource.close();const url='/extract?symbol='+encodeURIComponent(selectedCompany.symbol)+'&name='+encodeURIComponent(selectedCompany.Name)+'&start_year='+startYear+'&end_year='+endYear;eventSource=new EventSource(url);eventSource.onmessage=function(event){const data=event.data.split('|');const type=data[0];if(type==='TOTAL'){document.getElementById('totalCount').textContent=data[1]}else if(type==='PROGRESS'){const completed=parseInt(data[1]);const total=parseInt(data[2]);const percentage=Math.round((completed/total)*100);document.getElementById('completedCount').textContent=completed;document.getElementById('progressBar').style.width=percentage+'%';document.getElementById('progressBar').textContent=percentage+'%'}else if(type==='COMPLETE'){sessionId=data[3];document.getElementById('status').innerHTML='✅ Complete! Downloaded '+data[1]+'/'+data[2]+' files';document.getElementById('downloadBtn').classList.add('show');eventSource.close()}}}function downloadZip(){if(sessionId){window.location.href='/download?session='+sessionId}}</script></body></html>'''
 
 @app.route('/')
 def index():
@@ -230,7 +232,13 @@ def extract():
         fetcher = ScreenerUnifiedFetcher()
         
         def run_extraction():
-            fetcher.process_company(symbol, name, start_year, end_year)
+            company_root = fetcher.process_company(symbol, name, start_year, end_year)
+            if company_root:
+                # Store the session data
+                download_sessions[session_id] = {
+                    'path': company_root,
+                    'timestamp': time.time()
+                }
         
         thread = threading.Thread(target=run_extraction)
         thread.start()
@@ -240,11 +248,7 @@ def extract():
                 log_line = log_queue.get(timeout=0.1)
                 if log_line.startswith('COMPLETE'):
                     parts = log_line.split('|')
-                    if len(parts) > 3 and parts[3]:
-                        download_paths[session_id] = parts[3]
-                        yield f"data: COMPLETE|{parts[1]}|{parts[2]}|{session_id}\n\n"
-                    else:
-                        yield f"data: {log_line}\n\n"
+                    yield f"data: COMPLETE|{parts[1]}|{parts[2]}|{session_id}\n\n"
                 else:
                     yield f"data: {log_line}\n\n"
             except queue.Empty:
@@ -256,10 +260,11 @@ def extract():
 def download():
     session_id = request.args.get('session')
     
-    if not session_id or session_id not in download_paths:
+    if not session_id or session_id not in download_sessions:
         return "No files available", 404
     
-    download_path = download_paths[session_id]
+    session_data = download_sessions[session_id]
+    download_path = session_data['path']
     
     if not download_path or not Path(download_path).exists():
         return "Files not found", 404
@@ -269,19 +274,38 @@ def download():
     try:
         with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
             root_path = Path(download_path)
+            file_count = 0
             for file_path in root_path.rglob('*.pdf'):
                 arcname = file_path.relative_to(root_path.parent)
                 zipf.write(file_path, arcname)
+                file_count += 1
+            
+            if file_count == 0:
+                return "No PDF files found", 404
         
         memory_file.seek(0)
         company_name = Path(download_path).name
         zip_filename = f"{company_name}_Documents.zip"
         
-        del download_paths[session_id]
+        # Don't delete the session immediately - keep it for 5 minutes
+        # Clean up old sessions (older than 5 minutes)
+        current_time = time.time()
+        sessions_to_delete = [
+            sid for sid, data in download_sessions.items() 
+            if current_time - data['timestamp'] > 300  # 5 minutes
+        ]
+        for sid in sessions_to_delete:
+            del download_sessions[sid]
         
-        return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=zip_filename)
+        return send_file(
+            memory_file, 
+            mimetype='application/zip', 
+            as_attachment=True, 
+            download_name=zip_filename
+        )
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logging.error(f"Download error: {str(e)}")
+        return f"Error creating ZIP: {str(e)}", 500
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
