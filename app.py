@@ -777,7 +777,15 @@ def download():
         )
     except Exception as e:
         return f"Error creating ZIP: {str(e)}", 500
-
+@app.route('/debug/check-session/<session_id>')
+def check_session(session_id):
+    exists = session_id in download_paths
+    path = download_paths.get(session_id, 'Not found')
+    return jsonify({
+        'session_exists': exists,
+        'path': path,
+        'all_sessions': list(download_paths.keys())
+    })
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
