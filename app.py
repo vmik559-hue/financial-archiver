@@ -20,7 +20,7 @@ warnings.filterwarnings("ignore")
 
 # ==================== CLOUD CONFIGURATION ====================
 # CSV will be loaded from GitHub raw URL
-CSV_URL = "https://raw.githubusercontent.com/vmik559-hue/financial-document-archiver/refs/heads/main/all-listed-companies.csv"
+CSV_URL = ""https://raw.githubusercontent.com/vmik559-hue/financial-archiver/main/all-listed-companies.csv""
 
 # Use /tmp for temporary file storage (cloud-compatible)
 DOCUMENTS_ROOT = Path('/tmp') / "Financial_Archive"
