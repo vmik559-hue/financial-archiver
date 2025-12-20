@@ -41,17 +41,25 @@ class ScreenerUnifiedFetcher:
         return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
 
     def extract_metadata(self, element):
+        """Extract year and month from element - checks multiple places"""
+        # Try to get text from parent li first, then link itself
         row = element.find_parent('li')
         search_text = row.get_text(" ", strip=True) if row else element.get_text(" ", strip=True)
         
-        year_match = re.search(r'\b(20\d{2})\b', search_text)
-        year = year_match.group(1) if year_match else "Unknown_Year"
+        # Also check the href attribute for year
+        href = element.get('href', '')
+        combined_text = search_text + " " + href
         
+        # Look for 4-digit year (2000-2099)
+        year_matches = re.findall(r'\b(20\d{2})\b', combined_text)
+        year = year_matches[0] if year_matches else "Unknown_Year"
+        
+        # Look for month names
         month_list = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
         month_name = "General"
         
         for m in month_list:
-            if re.search(rf'\b{m}\b', search_text, re.I):
+            if re.search(rf'\b{m}\b', combined_text, re.I):
                 month_name = m.capitalize()
                 break
         
