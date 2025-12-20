@@ -140,7 +140,12 @@ class ScreenerUnifiedFetcher:
             if cat:
                 year, month = self.extract_metadata(link)
                 
-                if year != "Unknown_Year" and (int(year) < start_year or int(year) > end_year):
+                # Skip if year couldn't be extracted or is outside range
+                if year == "Unknown_Year":
+                    continue
+                    
+                year_int = int(year)
+                if year_int < start_year or year_int > end_year:
                     continue
                 
                 seen_urls.add(href)
