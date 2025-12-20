@@ -19,10 +19,7 @@ from flask import Flask, render_template_string, request, jsonify, Response, sen
 warnings.filterwarnings("ignore")
 
 # ==================== CLOUD CONFIGURATION ====================
-# CSV will be loaded from GitHub raw URL
-CSV_URL = "https://raw.githubusercontent.com/vmik559-hue/financial-archiver/main/all-listed-companies.csv"
-
-# Use /tmp for temporary file storage (cloud-compatible)
+CSV_URL = "https://raw.githubusercontent.com/vmik559-hue/financial-archiver/refs/heads/main/all-listed-companies.csv"
 DOCUMENTS_ROOT = Path('/tmp') / "Financial_Archive"
 SCREENER_DOMAIN = "https://www.screener.in"
 DOCUMENTS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -30,7 +27,7 @@ DOCUMENTS_ROOT.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 log_queue = queue.Queue()
-MAX_WORKERS = 3  # Reduced for free tier
+MAX_WORKERS = 3
 
 class ScreenerUnifiedFetcher:
     def __init__(self):
@@ -156,7 +153,7 @@ class ScreenerUnifiedFetcher:
         
         if total_files == 0:
             log_queue.put("STATUS|No files found in the specified year range")
-            log_queue.put("COMPLETE|0|0")
+            log_queue.put("COMPLETE|0|0|")
             return []
 
         log_queue.put(f"TOTAL|{total_files}")
@@ -180,12 +177,15 @@ class ScreenerUnifiedFetcher:
                 log_queue.put(f"PROGRESS|{completed}|{total_files}|{eta_seconds}")
                 time.sleep(0.05)
         
-        log_queue.put(f"COMPLETE|{completed}|{total_files}|{comp_root}")
+        # Return the company root path as string
+        log_queue.put(f"COMPLETE|{completed}|{total_files}|{str(comp_root)}")
         return self.downloaded_files
 
 # ==================== FLASK APP ====================
 app = Flask(__name__)
-current_download_path = None
+
+# Store download paths per session/user - using dictionary with timestamp cleanup
+download_paths = {}
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -529,6 +529,7 @@ HTML_TEMPLATE = '''
     <script>
         let selectedCompany = null;
         let eventSource = null;
+        let sessionId = null;
 
         document.getElementById('searchInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') searchCompany();
@@ -635,6 +636,8 @@ HTML_TEMPLATE = '''
                 else if (type === 'COMPLETE') {
                     const completed = data[1];
                     const total = data[2];
+                    sessionId = data[3];  // Store the session ID
+                    
                     document.getElementById('status').innerHTML = `
                         <div class="complete-message">
                             ✅ Extraction Complete! Downloaded ${completed}/${total} files
@@ -659,7 +662,11 @@ HTML_TEMPLATE = '''
         }
 
         function downloadZip() {
-            window.location.href = '/download';
+            if (sessionId) {
+                window.location.href = '/download?session=' + sessionId;
+            } else {
+                alert('No files available for download');
+            }
         }
     </script>
 </body>
@@ -704,18 +711,18 @@ def search():
 
 @app.route('/extract')
 def extract():
-    global current_download_path
     symbol = request.args.get('symbol')
     name = request.args.get('name')
     start_year = int(request.args.get('start_year', 2015))
     end_year = int(request.args.get('end_year', 2025))
 
+    # Generate unique session ID
+    session_id = f"{symbol}_{int(time.time())}"
+
     def generate():
-        global current_download_path
         fetcher = ScreenerUnifiedFetcher()
         
         def run_extraction():
-            global current_download_path
             fetcher.process_company(symbol, name, start_year, end_year)
         
         thread = threading.Thread(target=run_extraction)
@@ -726,9 +733,15 @@ def extract():
                 log_line = log_queue.get(timeout=0.1)
                 if log_line.startswith('COMPLETE'):
                     parts = log_line.split('|')
-                    if len(parts) > 3:
-                        current_download_path = parts[3]
-                yield f"data: {log_line}\n\n"
+                    if len(parts) > 3 and parts[3]:
+                        # Store the path with session ID
+                        download_paths[session_id] = parts[3]
+                        # Send session ID to client instead of path
+                        yield f"data: COMPLETE|{parts[1]}|{parts[2]}|{session_id}\n\n"
+                    else:
+                        yield f"data: {log_line}\n\n"
+                else:
+                    yield f"data: {log_line}\n\n"
             except queue.Empty:
                 continue
 
@@ -736,32 +749,39 @@ def extract():
 
 @app.route('/download')
 def download():
-    global current_download_path
+    session_id = request.args.get('session')
     
-    if not current_download_path or not Path(current_download_path).exists():
+    if not session_id or session_id not in download_paths:
         return "No files available for download", 404
+    
+    download_path = download_paths[session_id]
+    
+    if not download_path or not Path(download_path).exists():
+        return "Files not found or expired", 404
     
     # Create ZIP file in memory
     memory_file = io.BytesIO()
     
-    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        root_path = Path(current_download_path)
-        for file_path in root_path.rglob('*.pdf'):
-            arcname = file_path.relative_to(root_path.parent)
-            zipf.write(file_path, arcname)
-    
-    memory_file.seek(0)
-    
-    company_name = Path(current_download_path).name
-    zip_filename = f"{company_name}_Financial_Documents.zip"
-    
-    return send_file(
-        memory_file,
-        mimetype='application/zip',
-        as_attachment=True,
-        download_name=zip_filename
-    )
-
-if __name__ == "__main__":
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    try:
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            root_path = Path(download_path)
+            for file_path in root_path.rglob('*.pdf'):
+                arcname = file_path.relative_to(root_path.parent)
+                zipf.write(file_path, arcname)
+        
+        memory_file.seek(0)
+        
+        company_name = Path(download_path).name
+        zip_filename = f"{company_name}_Financial_Documents.zip"
+        
+        # Clean up the session after successful download
+        del download_paths[session_id]
+        
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=zip_filename
+        )
+    except Exception as e:
+        return f"
