@@ -177,14 +177,11 @@ class ScreenerUnifiedFetcher:
                 log_queue.put(f"PROGRESS|{completed}|{total_files}|{eta_seconds}")
                 time.sleep(0.05)
         
-        # Return the company root path as string
         log_queue.put(f"COMPLETE|{completed}|{total_files}|{str(comp_root)}")
         return self.downloaded_files
 
 # ==================== FLASK APP ====================
 app = Flask(__name__)
-
-# Store download paths per session/user - using dictionary with timestamp cleanup
 download_paths = {}
 
 HTML_TEMPLATE = '''
@@ -636,7 +633,7 @@ HTML_TEMPLATE = '''
                 else if (type === 'COMPLETE') {
                     const completed = data[1];
                     const total = data[2];
-                    sessionId = data[3];  // Store the session ID
+                    sessionId = data[3];
                     
                     document.getElementById('status').innerHTML = `
                         <div class="complete-message">
@@ -684,7 +681,7 @@ def search():
         df['NSE Code'] = df['NSE Code'].astype(str).str.replace('nan', '')
         df['BSE Code'] = df['BSE Code'].apply(lambda x: str(int(x)) if pd.notnull(x) and str(x).replace('.0','').isdigit() else '')
     except Exception as e:
-        return jsonify({'error': f'Failed to load company database. Please contact admin.'})
+        return jsonify({'error': 'Failed to load company database'})
 
     query = request.json.get('query', '').strip().lower()
     
@@ -716,7 +713,6 @@ def extract():
     start_year = int(request.args.get('start_year', 2015))
     end_year = int(request.args.get('end_year', 2025))
 
-    # Generate unique session ID
     session_id = f"{symbol}_{int(time.time())}"
 
     def generate():
@@ -734,9 +730,7 @@ def extract():
                 if log_line.startswith('COMPLETE'):
                     parts = log_line.split('|')
                     if len(parts) > 3 and parts[3]:
-                        # Store the path with session ID
                         download_paths[session_id] = parts[3]
-                        # Send session ID to client instead of path
                         yield f"data: COMPLETE|{parts[1]}|{parts[2]}|{session_id}\n\n"
                     else:
                         yield f"data: {log_line}\n\n"
@@ -759,7 +753,6 @@ def download():
     if not download_path or not Path(download_path).exists():
         return "Files not found or expired", 404
     
-    # Create ZIP file in memory
     memory_file = io.BytesIO()
     
     try:
@@ -774,7 +767,6 @@ def download():
         company_name = Path(download_path).name
         zip_filename = f"{company_name}_Financial_Documents.zip"
         
-        # Clean up the session after successful download
         del download_paths[session_id]
         
         return send_file(
@@ -784,4 +776,8 @@ def download():
             download_name=zip_filename
         )
     except Exception as e:
-        return f"
+        return f"Error creating ZIP: {str(e)}", 500
+
+if __name__ == "__main__":
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
