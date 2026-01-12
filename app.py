@@ -159,7 +159,7 @@ class ScreenerUnifiedFetcher:
                     continue
                 
                 seen_urls.add(href)
-                save_dir = comp_root / year / cat
+                save_dir = comp_root / cat / year
                 
                 fname = f"{symbol_upper}_{month}_{year}_{cat}.pdf"
                 file_path = save_dir / fname
