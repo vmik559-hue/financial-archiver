@@ -92,6 +92,9 @@ class ScreenerUnifiedFetcher:
         log_queue.put(f"STATUS|Fetching data for {name}...")
         url = f"{SCREENER_DOMAIN}/company/{quote(symbol)}/"
         
+        # Parse download_type to support multiple comma-separated values
+        selected_types = [t.strip() for t in download_type.split(',')]
+        
         try:
             resp = cffi_requests.get(url, headers=self.headers, impersonate="chrome120", timeout=30)
             soup = BeautifulSoup(resp.content, 'html.parser')
@@ -104,7 +107,7 @@ class ScreenerUnifiedFetcher:
         download_tasks = []
         
         # ===== ANNUAL REPORTS - FIXED LOGIC =====
-        if download_type in ['all', 'annual_reports']:
+        if 'all' in selected_types or 'annual_reports' in selected_types:
             ar_section = soup.find('div', id='annual-reports')
             if not ar_section:
                 header = soup.find(lambda tag: tag.name in ['h2', 'h3'] and 'annual report' in tag.text.lower())
@@ -135,7 +138,7 @@ class ScreenerUnifiedFetcher:
                     download_tasks.append(('Annual Report', year, link['href'], file_path))
 
         # ===== PPT & TRANSCRIPTS - FIXED LOGIC =====
-        if download_type in ['all', 'ppt', 'transcript']:
+        if 'all' in selected_types or 'ppt' in selected_types or 'transcript' in selected_types:
             all_links = soup.find_all('a', href=True)
             seen_urls = set()
 
@@ -146,9 +149,9 @@ class ScreenerUnifiedFetcher:
                     continue
 
                 cat = None
-                if "transcript" in link_text and download_type in ['all', 'transcript']: 
+                if "transcript" in link_text and ('all' in selected_types or 'transcript' in selected_types): 
                     cat = "Transcript"
-                elif link_text == "ppt" and download_type in ['all', 'ppt']: 
+                elif link_text == "ppt" and ('all' in selected_types or 'ppt' in selected_types): 
                     cat = "PPT"
                 
                 if cat:
@@ -493,11 +496,38 @@ document.getElementById('searchInput').addEventListener('keypress',function(e){
 });
 
 function selectFileType(type){
-    downloadType=type;
-    document.querySelectorAll('.file-type-btn').forEach(btn=>{
-        btn.classList.remove('active')
-    });
-    document.querySelector(`.file-type-btn[data-type="${type}"]`).classList.add('active')
+    const btn=document.querySelector(`.file-type-btn[data-type="${type}"]`);
+    const allBtn=document.querySelector(`.file-type-btn[data-type="all"]`);
+    const otherBtns=document.querySelectorAll(`.file-type-btn:not([data-type="all"])`);
+    
+    if(type==='all'){
+        // If "All Files" is clicked, select only "All Files" and deselect others
+        otherBtns.forEach(b=>b.classList.remove('active'));
+        allBtn.classList.add('active');
+        downloadType='all';
+    }else{
+        // Toggle the clicked button
+        btn.classList.toggle('active');
+        // Deselect "All Files" when any specific type is selected
+        allBtn.classList.remove('active');
+        
+        // Collect all currently selected types (excluding "all")
+        const selectedTypes=[];
+        otherBtns.forEach(b=>{
+            if(b.classList.contains('active')){
+                selectedTypes.push(b.getAttribute('data-type'));
+            }
+        });
+        
+        // If none selected, fallback to "All Files"
+        if(selectedTypes.length===0){
+            allBtn.classList.add('active');
+            downloadType='all';
+        }else{
+            // Join selected types with comma
+            downloadType=selectedTypes.join(',');
+        }
+    }
 }
 
 async function searchCompany(){
@@ -552,7 +582,7 @@ function startExtraction(){
     document.getElementById('progressContainer').classList.add('show');
     document.getElementById('downloadBtn').classList.remove('show');
     if(eventSource)eventSource.close();
-    const url='/extract?symbol='+encodeURIComponent(selectedCompany.symbol)+'&name='+encodeURIComponent(selectedCompany.Name)+'&start_year='+startYear+'&end_year='+endYear+'&download_type='+downloadType;
+    const url='/extract?symbol='+encodeURIComponent(selectedCompany.symbol)+'&name='+encodeURIComponent(selectedCompany.Name)+'&start_year='+startYear+'&end_year='+endYear+'&download_type='+encodeURIComponent(downloadType);
     eventSource=new EventSource(url);
     eventSource.onmessage=function(event){
         const data=event.data.split('|');
