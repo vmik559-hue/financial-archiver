@@ -464,12 +464,14 @@ footer{position:relative;z-index:10;width:100%;padding:1.5rem;margin-top:auto;bo
                 <h3>Sentimental Analysis</h3>
                 <p>AI-driven insights on market mood from earnings calls.</p>
             </div>
+            <a href="https://web-production-f7a98.up.railway.app/" target="_blank" rel="noopener noreferrer" style="text-decoration:none;color:inherit;display:block">
             <div class="feature-card">
                 <span class="material-symbols-outlined bg-icon">dataset</span>
                 <div class="feature-icon purple"><span class="material-symbols-outlined">database</span></div>
                 <h3>FADA Data</h3>
                 <p>Federated Auto Dealers Association proprietary statistics.</p>
             </div>
+            </a>
         </div>
     </section>
 </main>
