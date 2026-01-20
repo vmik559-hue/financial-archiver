@@ -133,7 +133,7 @@ class ScreenerUnifiedFetcher:
                     if year_int < start_year or year_int > end_year:
                         continue
                     
-                    save_dir = comp_root / "Annual_Reports" / year
+                    save_dir = comp_root / "Annual_Reports"
                     file_path = save_dir / f"Annual_Report_{year}.pdf"
                     download_tasks.append(('Annual Report', year, link['href'], file_path))
 
@@ -166,7 +166,7 @@ class ScreenerUnifiedFetcher:
                         continue
                     
                     seen_urls.add(href)
-                    save_dir = comp_root / cat / year
+                    save_dir = comp_root / cat
                     
                     fname = f"{symbol_upper}_{month}_{year}_{cat}.pdf"
                     file_path = save_dir / fname
