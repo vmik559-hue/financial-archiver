@@ -362,39 +362,26 @@ footer{position:relative;z-index:10;width:100%;padding:1.5rem;margin-top:auto;bo
                     <div class="year-select-wrap">
                         <span class="material-symbols-outlined">calendar_today</span>
                         <select class="year-select" id="startYear">
-                            <option value="2010">2010</option>
-                            <option value="2011">2011</option>
-                            <option value="2012">2012</option>
-                            <option value="2013">2013</option>
-                            <option value="2014">2014</option>
-                            <option value="2015" selected>2015</option>
-                            <option value="2016">2016</option>
-                            <option value="2017">2017</option>
-                            <option value="2018">2018</option>
-                            <option value="2019">2019</option>
-                            <option value="2020">2020</option>
+                            <option value="2020" selected>2020</option>
                             <option value="2021">2021</option>
                             <option value="2022">2022</option>
                             <option value="2023">2023</option>
                             <option value="2024">2024</option>
                             <option value="2025">2025</option>
+                            <option value="2026">2026</option>
                         </select>
                     </div>
                     <span class="material-symbols-outlined year-arrow">arrow_right_alt</span>
                     <div class="year-select-wrap">
                         <span class="material-symbols-outlined">calendar_today</span>
                         <select class="year-select" id="endYear">
-                            <option value="2015">2015</option>
-                            <option value="2016">2016</option>
-                            <option value="2017">2017</option>
-                            <option value="2018">2018</option>
-                            <option value="2019">2019</option>
                             <option value="2020">2020</option>
                             <option value="2021">2021</option>
                             <option value="2022">2022</option>
                             <option value="2023">2023</option>
                             <option value="2024">2024</option>
-                            <option value="2025" selected>2025</option>
+                            <option value="2025">2025</option>
+                            <option value="2026" selected>2026</option>
                         </select>
                     </div>
                 </div>
@@ -664,8 +651,8 @@ def search():
 def extract():
     symbol = request.args.get('symbol')
     name = request.args.get('name')
-    start_year = int(request.args.get('start_year', 2015))
-    end_year = int(request.args.get('end_year', 2025))
+    start_year = int(request.args.get('start_year', 2020))
+    end_year = int(request.args.get('end_year', 2026))
     download_type = request.args.get('download_type', 'all')
     session_id = f"{symbol}_{int(time.time())}"
 
