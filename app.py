@@ -42,19 +42,15 @@ class ScreenerUnifiedFetcher:
 
     def extract_metadata(self, element):
         """Extract year and month from element - checks multiple places"""
-        # Try to get text from parent li first, then link itself
         row = element.find_parent('li')
         search_text = row.get_text(" ", strip=True) if row else element.get_text(" ", strip=True)
         
-        # Also check the href attribute for year
         href = element.get('href', '')
         combined_text = search_text + " " + href
         
-        # Look for 4-digit year (2000-2099)
         year_matches = re.findall(r'\b(20\d{2})\b', combined_text)
         year = year_matches[0] if year_matches else "Unknown_Year"
         
-        # Look for month names
         month_list = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
         month_name = "General"
         
@@ -92,7 +88,6 @@ class ScreenerUnifiedFetcher:
         log_queue.put(f"STATUS|Fetching data for {name}...")
         url = f"{SCREENER_DOMAIN}/company/{quote(symbol)}/"
         
-        # Parse download_type to support multiple comma-separated values
         selected_types = [t.strip() for t in download_type.split(',')]
         
         try:
@@ -106,7 +101,6 @@ class ScreenerUnifiedFetcher:
         self.company_root = str(comp_root)
         download_tasks = []
         
-        # ===== ANNUAL REPORTS - FIXED LOGIC =====
         if 'all' in selected_types or 'annual_reports' in selected_types:
             ar_section = soup.find('div', id='annual-reports')
             if not ar_section:
@@ -129,7 +123,6 @@ class ScreenerUnifiedFetcher:
                     year = year_match.group(1)
                     year_int = int(year)
                     
-                    # Skip if outside year range
                     if year_int < start_year or year_int > end_year:
                         continue
                     
@@ -137,7 +130,6 @@ class ScreenerUnifiedFetcher:
                     file_path = save_dir / f"Annual_Report_{year}.pdf"
                     download_tasks.append(('Annual Report', year, link['href'], file_path))
 
-        # ===== PPT & TRANSCRIPTS - FIXED LOGIC =====
         if 'all' in selected_types or 'ppt' in selected_types or 'transcript' in selected_types:
             all_links = soup.find_all('a', href=True)
             seen_urls = set()
@@ -157,7 +149,6 @@ class ScreenerUnifiedFetcher:
                 if cat:
                     year, month = self.extract_metadata(link)
                     
-                    # FIXED: Skip if year is unknown OR outside range
                     if year == "Unknown_Year":
                         continue
                         
@@ -362,6 +353,12 @@ footer{position:relative;z-index:10;width:100%;padding:1.5rem;margin-top:auto;bo
                     <div class="year-select-wrap">
                         <span class="material-symbols-outlined">calendar_today</span>
                         <select class="year-select" id="startYear">
+                            <option value="2014">2014</option>
+                            <option value="2015">2015</option>
+                            <option value="2016">2016</option>
+                            <option value="2017">2017</option>
+                            <option value="2018">2018</option>
+                            <option value="2019">2019</option>
                             <option value="2020" selected>2020</option>
                             <option value="2021">2021</option>
                             <option value="2022">2022</option>
@@ -375,13 +372,19 @@ footer{position:relative;z-index:10;width:100%;padding:1.5rem;margin-top:auto;bo
                     <div class="year-select-wrap">
                         <span class="material-symbols-outlined">calendar_today</span>
                         <select class="year-select" id="endYear">
+                            <option value="2014">2014</option>
+                            <option value="2015">2015</option>
+                            <option value="2016">2016</option>
+                            <option value="2017">2017</option>
+                            <option value="2018">2018</option>
+                            <option value="2019">2019</option>
                             <option value="2020">2020</option>
                             <option value="2021">2021</option>
                             <option value="2022">2022</option>
                             <option value="2023">2023</option>
                             <option value="2024">2024</option>
-                            <option value="2025">2025</option>
-                            <option value="2026" selected>2026</option>
+                            <option value="2025" selected>2025</option>
+                            <option value="2026">2026</option>
                         </select>
                     </div>
                 </div>
@@ -490,17 +493,13 @@ function selectFileType(type){
     const otherBtns=document.querySelectorAll(`.file-type-btn:not([data-type="all"])`);
     
     if(type==='all'){
-        // If "All Files" is clicked, select only "All Files" and deselect others
         otherBtns.forEach(b=>b.classList.remove('active'));
         allBtn.classList.add('active');
         downloadType='all';
     }else{
-        // Toggle the clicked button
         btn.classList.toggle('active');
-        // Deselect "All Files" when any specific type is selected
         allBtn.classList.remove('active');
         
-        // Collect all currently selected types (excluding "all")
         const selectedTypes=[];
         otherBtns.forEach(b=>{
             if(b.classList.contains('active')){
@@ -508,12 +507,10 @@ function selectFileType(type){
             }
         });
         
-        // If none selected, fallback to "All Files"
         if(selectedTypes.length===0){
             allBtn.classList.add('active');
             downloadType='all';
         }else{
-            // Join selected types with comma
             downloadType=selectedTypes.join(',');
         }
     }
@@ -652,7 +649,7 @@ def extract():
     symbol = request.args.get('symbol')
     name = request.args.get('name')
     start_year = int(request.args.get('start_year', 2020))
-    end_year = int(request.args.get('end_year', 2026))
+    end_year = int(request.args.get('end_year', 2025))
     download_type = request.args.get('download_type', 'all')
     session_id = f"{symbol}_{int(time.time())}"
 
@@ -714,7 +711,6 @@ def download():
         company_name = Path(download_path).name
         zip_filename = f"{company_name}_Documents.zip"
         
-        # Clean up old sessions (older than 5 minutes)
         current_time = time.time()
         sessions_to_delete = [
             sid for sid, data in download_sessions.items() 
