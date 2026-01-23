@@ -42,15 +42,19 @@ class ScreenerUnifiedFetcher:
 
     def extract_metadata(self, element):
         """Extract year and month from element - checks multiple places"""
+        # Try to get text from parent li first, then link itself
         row = element.find_parent('li')
         search_text = row.get_text(" ", strip=True) if row else element.get_text(" ", strip=True)
         
+        # Also check the href attribute for year
         href = element.get('href', '')
         combined_text = search_text + " " + href
         
+        # Look for 4-digit year (2000-2099)
         year_matches = re.findall(r'\b(20\d{2})\b', combined_text)
         year = year_matches[0] if year_matches else "Unknown_Year"
         
+        # Look for month names
         month_list = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
         month_name = "General"
         
@@ -61,26 +65,56 @@ class ScreenerUnifiedFetcher:
         
         return year, month_name
 
-    def download_file(self, url, save_path):
-        try:
-            full_url = urljoin(SCREENER_DOMAIN, url)
-            headers = self.headers.copy()
-            domain = urlparse(full_url).netloc
-            if 'bseindia' in domain: headers['Referer'] = 'https://www.bseindia.com/'
-            elif 'nseindia' in domain: headers['Referer'] = 'https://www.nseindia.com/'
-            else: headers['Referer'] = SCREENER_DOMAIN
+    def download_file(self, url, save_path, max_retries=3):
+        """Download file with retry logic for Vercel compatibility"""
+        full_url = urljoin(SCREENER_DOMAIN, url)
+        
+        for attempt in range(max_retries):
+            try:
+                headers = self.headers.copy()
+                domain = urlparse(full_url).netloc
+                
+                # Enhanced headers for BSE India URLs
+                if 'bseindia' in domain:
+                    headers.update({
+                        'Referer': 'https://www.bseindia.com/',
+                        'Accept': 'application/pdf,*/*',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Connection': 'keep-alive',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'same-origin',
+                    })
+                elif 'nseindia' in domain:
+                    headers['Referer'] = 'https://www.nseindia.com/'
+                else:
+                    headers['Referer'] = SCREENER_DOMAIN
 
-            r = cffi_requests.get(full_url, headers=headers, impersonate="chrome120", timeout=60, allow_redirects=True)
-            
-            if r.status_code == 200 and len(r.content) > 1000:
-                save_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(save_path, 'wb') as f:
-                    f.write(r.content)
-                self.downloaded_files.append(str(save_path))
-                return True
-            return False
-        except Exception as e:
-            return False
+                # Shorter timeout for Vercel (30s vs 60s)
+                r = cffi_requests.get(full_url, headers=headers, impersonate="chrome120", timeout=30, allow_redirects=True)
+                
+                if r.status_code == 200 and len(r.content) > 1000:
+                    save_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(save_path, 'wb') as f:
+                        f.write(r.content)
+                    self.downloaded_files.append(str(save_path))
+                    return True
+                    
+                # Retry on non-200 status
+                if attempt < max_retries - 1:
+                    time.sleep(0.5)
+                    continue
+                return False
+                
+            except Exception as e:
+                # Retry on exception
+                if attempt < max_retries - 1:
+                    time.sleep(0.5)
+                    continue
+                return False
+        
+        return False
 
     def process_company(self, symbol, name, start_year, end_year, download_type='all'):
         self.downloaded_files = []
@@ -88,6 +122,7 @@ class ScreenerUnifiedFetcher:
         log_queue.put(f"STATUS|Fetching data for {name}...")
         url = f"{SCREENER_DOMAIN}/company/{quote(symbol)}/"
         
+        # Parse download_type to support multiple comma-separated values
         selected_types = [t.strip() for t in download_type.split(',')]
         
         try:
@@ -101,6 +136,7 @@ class ScreenerUnifiedFetcher:
         self.company_root = str(comp_root)
         download_tasks = []
         
+        # ===== ANNUAL REPORTS - FIXED LOGIC =====
         if 'all' in selected_types or 'annual_reports' in selected_types:
             ar_section = soup.find('div', id='annual-reports')
             if not ar_section:
@@ -123,6 +159,7 @@ class ScreenerUnifiedFetcher:
                     year = year_match.group(1)
                     year_int = int(year)
                     
+                    # Skip if outside year range
                     if year_int < start_year or year_int > end_year:
                         continue
                     
@@ -130,6 +167,7 @@ class ScreenerUnifiedFetcher:
                     file_path = save_dir / f"Annual_Report_{year}.pdf"
                     download_tasks.append(('Annual Report', year, link['href'], file_path))
 
+        # ===== PPT & TRANSCRIPTS - FIXED LOGIC =====
         if 'all' in selected_types or 'ppt' in selected_types or 'transcript' in selected_types:
             all_links = soup.find_all('a', href=True)
             seen_urls = set()
@@ -149,6 +187,7 @@ class ScreenerUnifiedFetcher:
                 if cat:
                     year, month = self.extract_metadata(link)
                     
+                    # FIXED: Skip if year is unknown OR outside range
                     if year == "Unknown_Year":
                         continue
                         
@@ -493,13 +532,17 @@ function selectFileType(type){
     const otherBtns=document.querySelectorAll(`.file-type-btn:not([data-type="all"])`);
     
     if(type==='all'){
+        // If "All Files" is clicked, select only "All Files" and deselect others
         otherBtns.forEach(b=>b.classList.remove('active'));
         allBtn.classList.add('active');
         downloadType='all';
     }else{
+        // Toggle the clicked button
         btn.classList.toggle('active');
+        // Deselect "All Files" when any specific type is selected
         allBtn.classList.remove('active');
         
+        // Collect all currently selected types (excluding "all")
         const selectedTypes=[];
         otherBtns.forEach(b=>{
             if(b.classList.contains('active')){
@@ -507,10 +550,12 @@ function selectFileType(type){
             }
         });
         
+        // If none selected, fallback to "All Files"
         if(selectedTypes.length===0){
             allBtn.classList.add('active');
             downloadType='all';
         }else{
+            // Join selected types with comma
             downloadType=selectedTypes.join(',');
         }
     }
@@ -711,6 +756,7 @@ def download():
         company_name = Path(download_path).name
         zip_filename = f"{company_name}_Documents.zip"
         
+        # Clean up old sessions (older than 5 minutes)
         current_time = time.time()
         sessions_to_delete = [
             sid for sid, data in download_sessions.items() 
