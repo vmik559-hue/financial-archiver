@@ -26,7 +26,7 @@ DOCUMENTS_ROOT.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 log_queue = queue.Queue()
-MAX_WORKERS = 3
+MAX_WORKERS = 1  # Sequential download for Vercel compatibility
 
 class ScreenerUnifiedFetcher:
     def __init__(self):
@@ -66,8 +66,9 @@ class ScreenerUnifiedFetcher:
         return year, month_name
 
     def download_file(self, url, save_path, max_retries=3):
-        """Download file with retry logic for Vercel compatibility"""
+        """Download file with retry logic and fallback for Vercel compatibility"""
         full_url = urljoin(SCREENER_DOMAIN, url)
+        is_bseplus = 'bseplus' in full_url
         
         for attempt in range(max_retries):
             try:
@@ -80,19 +81,15 @@ class ScreenerUnifiedFetcher:
                         'Referer': 'https://www.bseindia.com/',
                         'Accept': 'application/pdf,*/*',
                         'Accept-Language': 'en-US,en;q=0.9',
-                        'Accept-Encoding': 'gzip, deflate, br',
                         'Connection': 'keep-alive',
-                        'Sec-Fetch-Dest': 'document',
-                        'Sec-Fetch-Mode': 'navigate',
-                        'Sec-Fetch-Site': 'same-origin',
                     })
                 elif 'nseindia' in domain:
                     headers['Referer'] = 'https://www.nseindia.com/'
                 else:
                     headers['Referer'] = SCREENER_DOMAIN
 
-                # Shorter timeout for Vercel (30s vs 60s)
-                r = cffi_requests.get(full_url, headers=headers, impersonate="chrome120", timeout=30, allow_redirects=True)
+                # Try curl_cffi first with shorter timeout
+                r = cffi_requests.get(full_url, headers=headers, impersonate="chrome120", timeout=45, allow_redirects=True)
                 
                 if r.status_code == 200 and len(r.content) > 1000:
                     save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,14 +100,27 @@ class ScreenerUnifiedFetcher:
                     
                 # Retry on non-200 status
                 if attempt < max_retries - 1:
-                    time.sleep(0.5)
+                    time.sleep(1)
                     continue
                 return False
                 
             except Exception as e:
-                # Retry on exception
+                # On exception, try with different impersonation on retry
                 if attempt < max_retries - 1:
-                    time.sleep(0.5)
+                    time.sleep(1)
+                    # Try with different browser impersonation on retry
+                    try:
+                        alt_browsers = ["chrome110", "chrome116", "safari15_5"]
+                        alt_browser = alt_browsers[attempt % len(alt_browsers)]
+                        r = cffi_requests.get(full_url, headers=headers, impersonate=alt_browser, timeout=45, allow_redirects=True)
+                        if r.status_code == 200 and len(r.content) > 1000:
+                            save_path.parent.mkdir(parents=True, exist_ok=True)
+                            with open(save_path, 'wb') as f:
+                                f.write(r.content)
+                            self.downloaded_files.append(str(save_path))
+                            return True
+                    except:
+                        pass
                     continue
                 return False
         
